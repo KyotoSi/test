@@ -178,8 +178,8 @@ def format_amount_in_words(amount):
 def process_reporting_data(reporting_path, sed_path):
     """Обработка данных из файлов отчетности и СЭД"""
     try:
-        # Читаем файл отчетности
-        reporting_df = pd.read_excel(reporting_path, sheet_name='Внутригрупповая отчетность')
+        # Читаем файл отчетности из выгрузки робота (формат xlsb)
+        reporting_df = pd.read_excel(reporting_path, engine='pyxlsb')
         
         # Читаем файл СЭД
         sed_df = pd.read_excel(sed_path)
@@ -190,18 +190,18 @@ def process_reporting_data(reporting_path, sed_path):
         # Обрабатываем каждую строку отчетности
         for index, row in reporting_df.iterrows():
             try:
-                order_number = row.iloc[6] if len(row) > 6 else None  # Колонка G (индекс 6)
-                contractor_name = row.iloc[9] if len(row) > 9 else None  # Колонка J (индекс 9)
-                planned_date = row.iloc[17] if len(row) > 17 else None  # Колонка R (индекс 17)
-                actual_date = row.iloc[29] if len(row) > 29 else None  # Колонка AD (индекс 29)
-                amount = row.iloc[16] if len(row) > 16 else 0  # Колонка Q (индекс 16)
-                
+                order_number = row.iloc[5] if len(row) > 5 else None  # Номер заказа
+                contractor_name = row.iloc[16] if len(row) > 16 else None  # Наименование поставщика
+                planned_date = row.iloc[19] if len(row) > 19 else None  # Дата поставки по спецификации
+                actual_date = row.iloc[24] if len(row) > 24 else None  # Дата оприходования в системе
+                amount = row.iloc[15] if len(row) > 15 else 0  # Сумма без НДС
+
                 # Дополнительные поля для приложения
-                col_k = row.iloc[10] if len(row) > 10 else ""  # Колонка K
-                col_l = row.iloc[11] if len(row) > 11 else ""  # Колонка L
-                col_m = row.iloc[12] if len(row) > 12 else ""  # Колонка M
-                col_n = row.iloc[13] if len(row) > 13 else ""  # Колонка N
-                col_p = row.iloc[15] if len(row) > 15 else ""  # Колонка P
+                material = row.iloc[9] if len(row) > 9 else ""  # Материал
+                material_name = row.iloc[10] if len(row) > 10 else ""  # Наименование материала
+                order_quantity = row.iloc[13] if len(row) > 13 else 0  # Количество заказа
+                price_without_vat = row.iloc[15] if len(row) > 15 else 0  # Цена без НДС
+                ppz = row.iloc[11] if len(row) > 11 else ""  # ППЗ
                 
                 if pd.isna(order_number) or pd.isna(planned_date) or pd.isna(contractor_name):
                     continue
@@ -269,11 +269,11 @@ def process_reporting_data(reporting_path, sed_path):
                         
                         # Добавляем позицию
                         position_data = {
-                            'col_k': col_k,
-                            'col_l': col_l,
-                            'col_m': col_m,
-                            'col_n': col_n,
-                            'col_p': col_p,
+                            'material': material,
+                            'material_name': material_name,
+                            'order_quantity': order_quantity,
+                            'price_without_vat': price_without_vat,
+                            'ppz': ppz,
                             'amount': amount,
                             'days_overdue': days_overdue,
                             'penalty': penalty
@@ -399,23 +399,23 @@ def generate_appendix_document(letter_data, output_path):
         
         # Заголовки таблицы
         hdr_cells = table.rows[0].cells
-        hdr_cells[0].text = 'Колонка K'
-        hdr_cells[1].text = 'Колонка L'
-        hdr_cells[2].text = 'Колонка M'
-        hdr_cells[3].text = 'Колонка N'
-        hdr_cells[4].text = 'Колонка Q (Сумма)'
-        hdr_cells[5].text = 'Колонка P'
+        hdr_cells[0].text = 'Материал'
+        hdr_cells[1].text = 'Наименование материала'
+        hdr_cells[2].text = 'Количество заказа'
+        hdr_cells[3].text = 'Цена без НДС'
+        hdr_cells[4].text = 'Сумма без НДС'
+        hdr_cells[5].text = 'ППЗ'
         hdr_cells[6].text = 'Дни просрочки'
-        
+
         # Добавляем строки с данными
         for position in letter_data['positions']:
             row_cells = table.add_row().cells
-            row_cells[0].text = str(position['col_k'])
-            row_cells[1].text = str(position['col_l'])
-            row_cells[2].text = str(position['col_m'])
-            row_cells[3].text = str(position['col_n'])
+            row_cells[0].text = str(position['material'])
+            row_cells[1].text = str(position['material_name'])
+            row_cells[2].text = str(position['order_quantity'])
+            row_cells[3].text = f"{position['price_without_vat']:.2f}"
             row_cells[4].text = f"{position['amount']:.2f}"
-            row_cells[5].text = str(position['col_p'])
+            row_cells[5].text = str(position['ppz'])
             row_cells[6].text = str(position['days_overdue'])
         
         # Сохраняем документ
