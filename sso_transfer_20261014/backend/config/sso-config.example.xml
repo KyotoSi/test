@@ -1,0 +1,275 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  sso-config.example.xml — ОБРАЗЕЦ конфигурации SSO бэкенда (боевой вариант).
+
+  Как использовать:
+    1. Скопируйте в config/sso-config.xml (или задайте путь env SSO_CONFIG).
+    2. Заполните значения под свои ADFS и SAP (см. docs/SSO-SETUP.md).
+    3. Секреты НЕ пишите в XML — ссылайтесь на переменные окружения:
+         ${ИМЯ}            — обязательная переменная;
+         ${ИМЯ:-значение}  — со значением по умолчанию.
+       Переменные можно положить в backend/.env (файл в .gitignore).
+    4. Относительные пути к файлам считаются от папки backend.
+       Ключи и сертификаты храните в backend/keys/ (папка в .gitignore).
+
+  При старте конфиг валидируется; при ошибках сервер не запускается и
+  печатает понятный список проблем.
+
+  Поток (AUTH_CONTRACT.md):
+    браузер → /auth/login → ADFS (Kerberos/WIA, бесшовно) → POST SAMLResponse
+    → /auth/saml/acs → сессия → бэк подписывает SAML2 Bearer Assertion
+    → SAP /sap/bc/sec/oauth2/token → access_token пользователя
+    → OData с Authorization: Bearer.
+-->
+<SsoConfig>
+
+  <!--
+    ServiceProvider — сам бэкенд.
+      entityId          — уникальный идентификатор SP. Он же Issuer в SAML2 Bearer
+                          Assertion, поэтому ДОЛЖЕН совпадать с именем доверенного
+                          провайдера в SAP (транзакция SAML2 → Trusted Providers →
+                          OAuth 2.0 Identity Providers).
+      acsUrl            — публичный URL /auth/saml/acs (регистрируется в ADFS).
+      sloUrl            — (необязательно) URL /auth/saml/slo для выхода через ADFS.
+      publicBaseUrl     — (необязательно) внешний адрес бэка; по умолчанию origin acsUrl.
+                          Из него строится loginUrl для фронта.
+      privateKeyFile    — приватный ключ бэка (PEM). Им подписываются AuthnRequest
+                          и Bearer Assertion. Генерация: docs/SSO-SETUP.md, раздел 3.
+      privateKeyPassphrase — пароль ключа, если он зашифрован (через ${ENV}).
+      certificateFile   — сертификат к ключу (PEM). Импортируется в ADFS (подпись
+                          запросов) и в SAP (STRUST + SAML2 — доверие к Assertion).
+      signAuthnRequests — подписывать AuthnRequest (рекомендуется true).
+  -->
+  <ServiceProvider
+      entityId="https://mfc-api.polyus.com/saml/sp"
+      acsUrl="https://mfc-api.polyus.com/auth/saml/acs"
+      sloUrl="https://mfc-api.polyus.com/auth/saml/slo"
+      privateKeyFile="./keys/sp.key"
+      privateKeyPassphrase="${SP_KEY_PASSPHRASE:-}"
+      certificateFile="./keys/sp.crt"
+      signAuthnRequests="true" />
+
+  <!--
+    IdentityProvider — ADFS.
+      Вариант 1 (рекомендуется): metadataFile — скачанный файл
+        https://<adfs>/FederationMetadata/2007-06/FederationMetadata.xml
+        (entityId, URL SSO/SLO и сертификаты подписи берутся из него).
+      Вариант 2: inline — entityId, ssoUrl, sloUrl, certificateFile
+        или <Certificate>base64/PEM</Certificate>.
+      Значения атрибутов перекрывают значения из метаданных.
+
+      wantAssertionsSigned    — требовать подпись Assertion (ADFS по умолчанию
+                                подписывает именно Assertion). Оставьте true.
+      wantAuthnResponseSigned — требовать подпись всего Response. В ADFS это
+                                Set-AdfsRelyingPartyTrust -SamlResponseSignature
+                                MessageAndAssertion. По умолчанию false.
+      clockSkewSeconds        — допуск расхождения часов (по умолчанию 120).
+      nameIdFormat            — запрашиваемый формат NameID.
+      requestedAuthnContext   — НЕ задавайте для бесшовного входа: при
+                                PasswordProtectedTransport ADFS покажет форму
+                                вместо Windows Integrated Authentication.
+  -->
+  <IdentityProvider
+      metadataFile="./config/idp-metadata.xml"
+      wantAssertionsSigned="true"
+      wantAuthnResponseSigned="false"
+      clockSkewSeconds="120"
+      nameIdFormat="urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified">
+
+    <!--
+      UserMapping — откуда взять SAP-логин:
+        source="nameId"    — из NameID (в ADFS: claim rule «sAMAccountName → Name ID»);
+        source="attribute" — из атрибута (attribute="полное имя claim", например
+                             http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn).
+        stripDomain="true" — "ivanovii@polyus.com" → "ivanovii", "POLYUS\ivanovii" → "ivanovii".
+        case="upper"       — upper | lower | none (логины SAP — в верхнем регистре).
+      Результат уходит в NameID Bearer Assertion для SAP. Если в SAP пользователи
+      сопоставляются по e-mail — используйте атрибут e-mail, stripDomain="false",
+      case="none" и nameIdFormat=emailAddress в <SapSystem>.
+    -->
+    <UserMapping source="nameId" stripDomain="true" case="upper" />
+
+    <!-- Имена claim'ов ADFS для профиля и групп (значения по умолчанию показаны). -->
+    <Attributes
+        displayName="http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name"
+        email="http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress"
+        groups="http://schemas.microsoft.com/ws/2008/06/identity/claims/role"
+        firstName="http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname"
+        lastName="http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname" />
+  </IdentityProvider>
+
+  <!--
+    SapSystems — все системы ландшафта. Нужная выбирается АВТОМАТИЧЕСКИ при входе
+    (docs/SSO-SETUP.md, раздел 7.1):
+      1. env SAP_SYSTEM=S4P (или атрибут select="S4P") — жёсткий выбор;
+      2. адрес фронта (returnTo / Origin / Referer), 3. адрес бэка, 4. имя сервера —
+         ищется токен detect (по умолчанию id: s4d / s4q / s4r / s4p);
+      5. default.
+    Атрибуты <SapSystem>:
+      id               — S4D / S4Q / S4R / S4P.
+      detect           — признаки системы в имени хоста через запятую, или /regex/
+                         (по умолчанию id в нижнем регистре).
+      baseUrl          — корень OData-сервиса.
+      sapClient        — auto (по умолчанию): мандант по умолчанию системы, sap-client
+                         не передаётся, номер берётся из куки sap-usercontext;
+                         или явный мандант (150).
+      tokenEndpoint    — OAuth 2.0 token endpoint SAP.
+      clientId         — OAuth-клиент (SOAUTH2; это же имя служебного пользователя
+                         типа «System», созданного для клиента).
+      clientSecret     — пароль OAuth-клиента: ТОЛЬКО через ${ENV}.
+      scope            — scope(ы) через пробел (обычно ZMM_MFC_TASK_SRV_0001).
+      audience         — Audience в Bearer Assertion = имя ЛОКАЛЬНОГО провайдера SAP
+                         (SAML2 → Local Provider → Provider Name).
+      nameIdFormat     — формат NameID для доверенного провайдера (SAML2 → Trusted Provider).
+      assertionEncoding — base64 (по умолчанию) или base64url.
+      caFile           — корпоративный корневой CA (PEM) для проверки TLS SAP.
+      rejectUnauthorized — false запрещён в production.
+      timeoutMs        — таймаут OData-запросов (по умолчанию 120000).
+      assertionLifetimeSeconds / tokenRefreshSkewSeconds — 300 / 60.
+      deliveryBookEntitySet    — куда направлять /DeliveryBookSet (DelivBookDataSet).
+    !!! Хосты S4Q / S4R / S4P заполнены по образцу S4D — проверьте.
+  -->
+  <SapSystems default="S4P">
+    <SapSystem id="S4D" sapClient="150"
+        baseUrl="https://mos-s-saps4d.polyus.com:8001/sap/opu/odata/sap/ZMM_MFC_TASK_SRV"
+        tokenEndpoint="https://mos-s-saps4d.polyus.com:8001/sap/bc/sec/oauth2/token"
+        clientId="MFC_WEBAPP" clientSecret="${SAP_OAUTH_CLIENT_SECRET}"
+        scope="ZMM_MFC_TASK_SRV_0001" audience="S4D_150"
+        nameIdFormat="urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified"
+        caFile="./keys/polyus-root-ca.pem" rejectUnauthorized="true" timeoutMs="120000" />
+    <SapSystem id="S4Q" sapClient="auto"
+        baseUrl="https://mos-s-saps4q.polyus.com:8001/sap/opu/odata/sap/ZMM_MFC_TASK_SRV"
+        tokenEndpoint="https://mos-s-saps4q.polyus.com:8001/sap/bc/sec/oauth2/token"
+        clientId="MFC_WEBAPP" clientSecret="${SAP_OAUTH_CLIENT_SECRET}"
+        scope="ZMM_MFC_TASK_SRV_0001" audience="S4Q"
+        nameIdFormat="urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified"
+        caFile="./keys/polyus-root-ca.pem" rejectUnauthorized="true" timeoutMs="120000" />
+    <SapSystem id="S4R" sapClient="auto"
+        baseUrl="https://mos-s-saps4r.polyus.com:8001/sap/opu/odata/sap/ZMM_MFC_TASK_SRV"
+        tokenEndpoint="https://mos-s-saps4r.polyus.com:8001/sap/bc/sec/oauth2/token"
+        clientId="MFC_WEBAPP" clientSecret="${SAP_OAUTH_CLIENT_SECRET}"
+        scope="ZMM_MFC_TASK_SRV_0001" audience="S4R"
+        nameIdFormat="urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified"
+        caFile="./keys/polyus-root-ca.pem" rejectUnauthorized="true" timeoutMs="120000" />
+    <SapSystem id="S4P" sapClient="auto"
+        baseUrl="https://mos-s-saps4p.polyus.com:8001/sap/opu/odata/sap/ZMM_MFC_TASK_SRV"
+        tokenEndpoint="https://mos-s-saps4p.polyus.com:8001/sap/bc/sec/oauth2/token"
+        clientId="MFC_WEBAPP" clientSecret="${SAP_OAUTH_CLIENT_SECRET}"
+        scope="ZMM_MFC_TASK_SRV_0001" audience="S4P"
+        nameIdFormat="urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified"
+        caFile="./keys/polyus-root-ca.pem" rejectUnauthorized="true" timeoutMs="120000" />
+  </SapSystems>
+
+  <!--
+    TechnicalUser (необязательно) — ТОЛЬКО для фоновых задач без пользователя
+    (сейчас: GET /health?deep=1). НИКОГДА не используется для запросов
+    пользователей. Если не нужен — оставьте enabled="false".
+  -->
+  <TechnicalUser enabled="false" system="S4P" username="MFC_MONITOR" password="${SAP_TECH_PASSWORD}" />
+
+  <!--
+    RoleMapping — права приложения. Источник ОДИН: SAP.
+    При входе бэк от имени пользователя отправляет в GetWebAppAuthMass пул
+    проверок <Check> (страница / блок / ACTVT по объекту ZMM_WEBAPP); SAP по
+    ролям PFCG пользователя отвечает RESULT='X' / пусто. Разрешённые проверки
+    дают permissions фронта из атрибута grants (через пробел).
+      ACTVT: 03 просмотр, 02 изменение, 78 распределение, 94 переназначение.
+      Формат permission: page:<PAGE>:<ACTVT> | block:<BLOCK>:<ACTVT>.
+    Ролей приложения, групп AD и «админов» здесь нет: права меняются только
+    ролями в SAP (PFCG) и применяются при следующем входе пользователя.
+  -->
+  <RoleMapping>
+    <SapAuthChecks enabled="true" functionImport="GetWebAppAuthMass">
+      <Check page="TASKS" block="ALL_TASKS"   actvt="03" grants="block:ALL_TASKS:03 page:CRM:03" />
+      <Check page="TASKS" block="UNVERIFIED"  actvt="03" grants="block:UNVERIFIED:03 page:CRM:03" />
+      <Check page="TASKS" block="VERIFIED"    actvt="03" grants="block:VERIFIED:03 page:CRM:03" />
+      <Check page="TASKS" block="INWORK"      actvt="03" grants="block:INWORK:03 page:CRM:03" />
+      <Check page="TASKS" block="COMPLETED"   actvt="03" grants="block:COMPLETED:03 page:CRM:03" />
+      <Check page="TASKS" block="OVERDUE"     actvt="03" grants="block:OVERDUE:03 page:CRM:03" />
+      <Check page="TASKS" block="REMARKS_SED" actvt="03" grants="block:REMARKS_SED:03 page:CRM:03" />
+      <Check page="TASKS" block="INWORK"      actvt="02" grants="block:INWORK:02 page:CRM:02" />
+      <Check page="TASKS" block="UNVERIFIED"  actvt="02" grants="block:UNVERIFIED:02 page:CRM:02" />
+      <Check page="TASKS" block="REMARKS_SED" actvt="02" grants="block:REMARKS_SED:02 page:CRM:02" />
+      <Check page="TASKS" block="ALL_TASKS"   actvt="78" grants="block:ALL_TASKS:78 block:INWORK:78" />
+      <Check page="TASKS" block="ALL_TASKS"   actvt="94" grants="block:ALL_TASKS:94 block:INWORK:94" />
+      <Check page="TASKS" block="INWORK"      actvt="78" grants="block:ALL_TASKS:78 block:INWORK:78" />
+      <Check page="TASKS" block="INWORK"      actvt="94" grants="block:ALL_TASKS:94 block:INWORK:94" />
+      <Check page="MONITORING" block="DELIVERY_MONITOR"  actvt="03" grants="block:DELIVERY_MONITOR:03 page:MONITORING:03" />
+      <Check page="MONITORING" block="DELIVERY_PROBLEMS" actvt="03" grants="block:DELIVERY_PROBLEMS:03 page:PROBLEMATIKA:03" />
+      <Check page="ANALYTICS" block="OVERVIEW"            actvt="03" grants="block:OVERVIEW:03 page:ANALYTICS:03" />
+      <Check page="ANALYTICS" block="GROUPS_RATING"       actvt="03" grants="block:GROUPS_RATING:03 page:ANALYTICS:03" />
+      <Check page="ANALYTICS" block="DELIVERIES"          actvt="03" grants="block:DELIVERIES:03 page:ANALYTICS:03" />
+      <Check page="ANALYTICS" block="EMPLOYEES"           actvt="03" grants="block:EMPLOYEES:03 page:ANALYTICS:03" />
+      <Check page="ANALYTICS" block="APPROVALS_ANALYTICS" actvt="03" grants="block:APPROVALS_ANALYTICS:03 page:ANALYTICS:03" />
+      <Check page="ANALYTICS" block="PAYMENTS"            actvt="03" grants="block:PAYMENTS:03 page:ANALYTICS:03" />
+      <Check page="ANALYTICS" block="ORDERS"              actvt="03" grants="block:ORDERS:03 page:ANALYTICS:03" />
+      <Check page="ANALYTICS" block="UNIFIED_REPORT"      actvt="03" grants="block:UNIFIED_REPORT:03 page:ANALYTICS:03 page:UNIFIED_REPORTING:03" />
+    </SapAuthChecks>
+  </RoleMapping>
+
+  <!--
+    UserProfile — профиль пользователя из SAP (от его имени) для /auth/me:
+    ФИО и табельный нужны фронту для персональной видимости задач.
+    Атрибуты — имена полей сущности.
+    purchasingGroups — имя поля со списком групп закупок (EKGRP) через запятую;
+    в текущем UserInfoSet такого поля нет — оставьте пустым или добавьте поле в SEGW.
+  -->
+  <UserProfile enabled="true" entitySet="UserInfoSet"
+      bname="Bname" firstName="NameFirst" lastName="NameLast" fullName="NameText"
+      persnr="Persnr" email="Email" department="Department"
+      purchasingGroups="" />
+
+  <!--
+    Session — кука сессии.
+      ttlMinutes    — тайм-аут бездействия (кука продлевается на каждом запросе).
+      absoluteHours — максимальная длительность сессии независимо от активности.
+      secure        — auto (true при NODE_ENV=production) | true | false.
+      sameSite      — lax (по умолчанию) | strict | none (none требует secure и HTTPS).
+                      Фронт и бэк должны быть «same-site» (один регистрируемый домен,
+                      например *.polyus.com), иначе Lax-кука не уйдёт в fetch.
+      secret        — ключ подписи куки (≥ 32 случайных символов) — через ${ENV}.
+      store         — memory (один инстанс). Для нескольких инстансов — внешний
+                      Store (Redis), см. docs/SSO-SETUP.md.
+  -->
+  <Session ttlMinutes="480" absoluteHours="12" cookieName="mfc.sid"
+           secure="auto" sameSite="lax" secret="${SESSION_SECRET}" store="memory" />
+
+  <!--
+    Security
+      AllowedOrigins  — белый список origin фронта (CORS с credentials и returnTo).
+                        Env ALLOWED_ORIGINS (через запятую) перекрывает список.
+      DefaultReturnTo — куда вернуть после входа, если returnTo не задан/недопустим.
+      TrustProxy      — значение express 'trust proxy' (false | true | число хопов |
+                        loopback). Нужен, если бэк за reverse proxy с TLS.
+  -->
+  <Security>
+    <AllowedOrigins>
+      <Origin>https://mfc.polyus.com</Origin>
+      <Origin>http://mos-s-sapdev03.polyus.com:8080</Origin>
+    </AllowedOrigins>
+    <DefaultReturnTo>https://mfc.polyus.com/</DefaultReturnTo>
+    <TrustProxy>loopback</TrustProxy>
+  </Security>
+
+  <!--
+    Cache — кэш ответов SAP. Ключ: sapUser + sapClient + url (у каждого
+    пользователя свой кэш). entitySets — что кэшировать (через запятую);
+    по умолчанию — read-only сущности из старого server.js.
+  -->
+  <Cache enabled="true" ttlSeconds="60" maxEntries="2000" />
+
+  <!--
+    DevMode — локальная разработка без ADFS и/или SAP. ЗАПРЕЩЁН при
+    NODE_ENV=production (сервер не запустится).
+      mockIdp="true" — вместо ADFS страница выбора пользователя из <User>.
+      mockSap="true" — вместо SAP мок-данные (mock/odata.js + src/sap/mock).
+      mockIdp="true" mockSap="false" — вход «как будто через ADFS» тестовым
+        пользователем, но с РЕАЛЬНЫМ обменом SAML2 Bearer → OAuth-токен SAP
+        (удобно отлаживать настройку SAP без ADFS).
+    <User> — id, sapUser, displayName, email, firstName, lastName, persnr,
+             groups (группы IdP через запятую), sapRoles (роли PFCG через запятую),
+             purchasingGroups (группы закупок через запятую).
+  -->
+  <DevMode enabled="false" />
+
+</SsoConfig>

@@ -1,0 +1,44 @@
+{
+  "name": "sap-odata-sso",
+  "version": "5.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "start:windows": "node --use-system-ca server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test --test-concurrency=1 \"test/**/*.test.js\"",
+    "gen-keys": "node scripts/gen-keys.js"
+  },
+  "keywords": [
+    "sap",
+    "odata",
+    "sso",
+    "saml2",
+    "oauth2",
+    "adfs",
+    "kerberos"
+  ],
+  "author": "",
+  "license": "ISC",
+  "description": "Express-прокси к SAP OData (ZMM_MFC_TASK_SRV) с SSO: ADFS (SAML2, Kerberos/WIA) → SAML2 Bearer → OAuth2 токен SAP пользователя",
+  "dependencies": {
+    "@node-saml/node-saml": "^5.1.0",
+    "@xmldom/xmldom": "^0.9.12",
+    "axios": "^1.12.2",
+    "cors": "^2.8.6",
+    "dotenv": "^16.6.1",
+    "express": "^4.22.2",
+    "express-session": "^1.19.0",
+    "xml-crypto": "^6.3.3"
+  },
+  "devDependencies": {
+    "selfsigned": "^5.5.0",
+    "supertest": "^7.3.1"
+  },
+  "engines": {
+    "node": ">=18.18"
+  },
+  "optionalDependencies": {
+    "node-expose-sspi": "^0.1.60"
+  }
+}

@@ -1,0 +1,28 @@
+Целевая версия (без мок-данных). Если в проекте на рабочем месте есть эти файлы/папки — удалите их:
+
+backend/index.js
+backend/serverCache.js
+backend/mock/                      (мок SAP OData — в целевой версии не используется)
+backend/src/sap/mock/              (мок SAP OData)
+backend/test/                      (тесты — для переноса не нужны)
+
+DevelopUi5/src/api/authHeaders.js
+DevelopUi5/src/api/index.js
+DevelopUi5/src/api/mockEmployees.js            (мок-справочник сотрудников)
+DevelopUi5/src/components/ui/data-source-toggle.jsx   (переключатель Mock/SAP)
+DevelopUi5/src/hooks/useCRMTasks.js
+DevelopUi5/src/hooks/usePatchTask.js
+DevelopUi5/src/hooks/useSAPTasks.js
+DevelopUi5/src/hooks/useTaskActions.js
+DevelopUi5/src/hooks/useUpdateTask.js
+DevelopUi5/src/pages/LoginPage.jsx
+DevelopUi5/src/services/api.js
+DevelopUi5/src/services/batchPoService.js
+DevelopUi5/src/services/sapApi.js
+DevelopUi5/src/services/sapDelivBookService.js
+DevelopUi5/src/services/sapODataService.js
+DevelopUi5/src/services/taskAuthService.js
+
+После копирования:  cd backend && npm install   |   cd DevelopUi5 && npm install
+Система (S4D/S4Q/S4R/S4P) и мандант определяются автоматически — см. backend/docs/SSO-SETUP.md, раздел 7.1.
+Принудительно выбрать систему: переменная окружения SAP_SYSTEM=S4Q.

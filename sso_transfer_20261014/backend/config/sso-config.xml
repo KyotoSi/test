@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  sso-config.xml — рабочая конфигурация: Windows-вход + SAP через Kerberos (DevMode).
+  Подробное описание всех параметров: sso-config.example.xml.
+  Для боевого запуска скопируйте example, заполните и выключите DevMode
+  (с NODE_ENV=production DevMode запрещён — сервер не стартует).
+-->
+<SsoConfig>
+
+  <ServiceProvider
+      entityId="http://localhost:3001/saml/sp"
+      acsUrl="http://localhost:3001/auth/saml/acs"
+      sloUrl="http://localhost:3001/auth/saml/slo"
+      privateKeyFile="./keys/sp.key"
+      certificateFile="./keys/sp.crt"
+      signAuthnRequests="true" />
+
+  <!-- При mockIdp="true" не используется; оставлено как шаблон -->
+  <IdentityProvider
+      metadataFile="./config/idp-metadata.xml"
+      wantAssertionsSigned="true"
+      wantAuthnResponseSigned="false">
+    <UserMapping source="nameId" stripDomain="true" case="upper" />
+  </IdentityProvider>
+
+  <!--
+    Системы SAP. Бэк сам выбирает нужную (подробно — docs/SSO-SETUP.md, «Системы и мандант»):
+      1. env SAP_SYSTEM=S4Q (или атрибут select="S4Q") — жёсткий выбор;
+      2. адрес фронта (returnTo / Origin / Referer), 3. адрес бэка, 4. имя сервера —
+         ищется токен из detect (по умолчанию id: s4d / s4q / s4r / s4p);
+      5. default.
+    На localhost и dev-ПК токена в адресе нет → default="S4D".
+
+    sapClient:
+      "auto" (по умолчанию) — мандант по умолчанию системы SAP: sap-client не
+             передаётся, номер бэк узнаёт из куки sap-usercontext (видно в /auth/me);
+      "150"  — явный мандант (для S4D: рабочий мандант 150, а не мандант по умолчанию).
+
+    !!! Адреса S4Q / S4R / S4P заполнены по образцу S4D — ПРОВЕРЬТЕ хост и порт.
+  -->
+  <SapSystems default="S4D">
+    <SapSystem id="S4D" sapClient="150"
+        baseUrl="https://mos-s-saps4d.polyus.com:8001/sap/opu/odata/sap/ZMM_MFC_TASK_SRV"
+        tokenEndpoint="https://mos-s-saps4d.polyus.com:8001/sap/bc/sec/oauth2/token"
+        clientId="MFC_WEBAPP" clientSecret="${SAP_OAUTH_CLIENT_SECRET:-}"
+        scope="ZMM_MFC_TASK_SRV_0001" audience="S4D_150" rejectUnauthorized="true" />
+    <SapSystem id="S4Q" sapClient="auto"
+        baseUrl="https://mos-s-saps4q.polyus.com:8001/sap/opu/odata/sap/ZMM_MFC_TASK_SRV"
+        tokenEndpoint="https://mos-s-saps4q.polyus.com:8001/sap/bc/sec/oauth2/token"
+        clientId="MFC_WEBAPP" clientSecret="${SAP_OAUTH_CLIENT_SECRET:-}"
+        scope="ZMM_MFC_TASK_SRV_0001" audience="S4Q" rejectUnauthorized="true" />
+    <SapSystem id="S4R" sapClient="auto"
+        baseUrl="https://mos-s-saps4r.polyus.com:8001/sap/opu/odata/sap/ZMM_MFC_TASK_SRV"
+        tokenEndpoint="https://mos-s-saps4r.polyus.com:8001/sap/bc/sec/oauth2/token"
+        clientId="MFC_WEBAPP" clientSecret="${SAP_OAUTH_CLIENT_SECRET:-}"
+        scope="ZMM_MFC_TASK_SRV_0001" audience="S4R" rejectUnauthorized="true" />
+    <SapSystem id="S4P" sapClient="auto"
+        baseUrl="https://mos-s-saps4p.polyus.com:8001/sap/opu/odata/sap/ZMM_MFC_TASK_SRV"
+        tokenEndpoint="https://mos-s-saps4p.polyus.com:8001/sap/bc/sec/oauth2/token"
+        clientId="MFC_WEBAPP" clientSecret="${SAP_OAUTH_CLIENT_SECRET:-}"
+        scope="ZMM_MFC_TASK_SRV_0001" audience="S4P" rejectUnauthorized="true" />
+  </SapSystems>
+
+  <!--
+    Права пользователя — ТОЛЬКО из SAP (объект полномочий ZMM_WEBAPP, роли PFCG).
+    При входе бэк от имени пользователя отправляет в GetWebAppAuthMass пул
+    проверок (страница / блок / ACTVT) ниже; SAP отвечает RESULT='X' / пусто.
+    Разрешённые проверки → permissions фронта (атрибут grants). Ничего сверх
+    ответа SAP приложение не добавляет: ролей, групп AD и «админа» в XML нет.
+    Чтобы закрыть/открыть блок — меняется роль в SAP (PFCG), не этот файл;
+    новые права пользователь получит при следующем входе.
+    Добавить в приложение новый блок = добавить строку <Check> (и ключ на фронте,
+    DevelopUi5/src/config/permissions.js).
+  -->
+  <RoleMapping>
+    <SapAuthChecks enabled="true" functionImport="GetWebAppAuthMass">
+      <Check page="TASKS" block="ALL_TASKS"   actvt="03" grants="block:ALL_TASKS:03 page:CRM:03" />
+      <Check page="TASKS" block="UNVERIFIED"  actvt="03" grants="block:UNVERIFIED:03 page:CRM:03" />
+      <Check page="TASKS" block="VERIFIED"    actvt="03" grants="block:VERIFIED:03 page:CRM:03" />
+      <Check page="TASKS" block="INWORK"      actvt="03" grants="block:INWORK:03 page:CRM:03" />
+      <Check page="TASKS" block="COMPLETED"   actvt="03" grants="block:COMPLETED:03 page:CRM:03" />
+      <Check page="TASKS" block="OVERDUE"     actvt="03" grants="block:OVERDUE:03 page:CRM:03" />
+      <Check page="TASKS" block="REMARKS_SED" actvt="03" grants="block:REMARKS_SED:03 page:CRM:03" />
+      <Check page="TASKS" block="INWORK"      actvt="02" grants="block:INWORK:02 page:CRM:02" />
+      <Check page="TASKS" block="UNVERIFIED"  actvt="02" grants="block:UNVERIFIED:02 page:CRM:02" />
+      <Check page="TASKS" block="REMARKS_SED" actvt="02" grants="block:REMARKS_SED:02 page:CRM:02" />
+      <Check page="TASKS" block="ALL_TASKS"   actvt="78" grants="block:ALL_TASKS:78 block:INWORK:78" />
+      <Check page="TASKS" block="ALL_TASKS"   actvt="94" grants="block:ALL_TASKS:94 block:INWORK:94" />
+      <Check page="TASKS" block="INWORK"      actvt="78" grants="block:ALL_TASKS:78 block:INWORK:78" />
+      <Check page="TASKS" block="INWORK"      actvt="94" grants="block:ALL_TASKS:94 block:INWORK:94" />
+      <Check page="MONITORING" block="DELIVERY_MONITOR"  actvt="03" grants="block:DELIVERY_MONITOR:03 page:MONITORING:03" />
+      <Check page="MONITORING" block="DELIVERY_PROBLEMS" actvt="03" grants="block:DELIVERY_PROBLEMS:03 page:PROBLEMATIKA:03" />
+      <Check page="ANALYTICS" block="OVERVIEW"            actvt="03" grants="block:OVERVIEW:03 page:ANALYTICS:03" />
+      <Check page="ANALYTICS" block="GROUPS_RATING"       actvt="03" grants="block:GROUPS_RATING:03 page:ANALYTICS:03" />
+      <Check page="ANALYTICS" block="DELIVERIES"          actvt="03" grants="block:DELIVERIES:03 page:ANALYTICS:03" />
+      <Check page="ANALYTICS" block="EMPLOYEES"           actvt="03" grants="block:EMPLOYEES:03 page:ANALYTICS:03" />
+      <Check page="ANALYTICS" block="APPROVALS_ANALYTICS" actvt="03" grants="block:APPROVALS_ANALYTICS:03 page:ANALYTICS:03" />
+      <Check page="ANALYTICS" block="PAYMENTS"            actvt="03" grants="block:PAYMENTS:03 page:ANALYTICS:03" />
+      <Check page="ANALYTICS" block="ORDERS"              actvt="03" grants="block:ORDERS:03 page:ANALYTICS:03" />
+      <Check page="ANALYTICS" block="UNIFIED_REPORT"      actvt="03" grants="block:UNIFIED_REPORT:03 page:ANALYTICS:03 page:UNIFIED_REPORTING:03" />
+    </SapAuthChecks>
+  </RoleMapping>
+
+  <!-- Профиль из SAP (UserInfoSet): ФИО, табельный, BNAME. При sap="mock" не читается. -->
+  <UserProfile enabled="true" entitySet="UserInfoSet"
+      bname="Bname" firstName="NameFirst" lastName="NameLast" fullName="NameText"
+      persnr="Persnr" email="Email" department="Department"
+      purchasingGroups="" />
+
+  <Session ttlMinutes="480" absoluteHours="12" cookieName="mfc.sid"
+           secure="auto" sameSite="lax" secret="${SESSION_SECRET:-}" store="memory" />
+
+  <Security>
+    <AllowedOrigins>
+      <Origin>http://localhost:5173</Origin>
+      <Origin>http://localhost:5174</Origin>
+      <Origin>http://localhost:3000</Origin>
+      <!-- Фронт в любой системе (S4D/S4Q/S4R/S4P) на хостах *.polyus.com -->
+      <Origin>https://*.polyus.com</Origin>
+      <Origin>http://*.polyus.com:*</Origin>
+    </AllowedOrigins>
+    <DefaultReturnTo>http://localhost:5174/</DefaultReturnTo>
+  </Security>
+
+  <Cache enabled="true" ttlSeconds="60" maxEntries="2000" />
+
+  <!--
+    DevMode — локальная разработка (при NODE_ENV=production запрещён).
+      identity="windows" — вход реальным Windows-пользователем браузера (Negotiate/SSPI, без ввода пароля);
+      sap="spnego" — в SAP от имени Windows-учётки, под которой запущен бэк (Kerberos).
+                     Пускается только пользователь браузера = владелец процесса.
+                     Нужен ПК в домене POLYUS и доступ к S4D.
+          "oauth"  — SAML2 Bearer → OAuth, как в бою (после настройки SOAUTH2 в SAP).
+      spn — SPN SAP для Kerberos (по умолчанию HTTP/<хост из baseUrl>).
+    Тестовых пользователей и мок-данных в этой версии нет: всегда реальный
+    пользователь и реальный SAP.
+  -->
+  <DevMode enabled="true" identity="windows" sap="spnego" />
+
+</SsoConfig>
